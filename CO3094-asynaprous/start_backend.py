@@ -27,7 +27,6 @@ import argparse
 
 from daemon import create_backend
 
-# Default port number used if none is specified via command-line arguments.
 PORT = 9000 
 
 if __name__ == "__main__":

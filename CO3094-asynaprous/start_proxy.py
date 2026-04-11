@@ -32,7 +32,6 @@ Requirements:
 - httpadapter: the class for handling HTTP requests.
 - urlparse: parses URLs to extract host and port information.
 - daemon.create_proxy: initializes and starts the proxy server.
-
 """
 
 import socket
@@ -50,7 +49,7 @@ PROXY_PORT = 8080
 def parse_virtual_hosts(config_file):
     """
     Parses virtual host blocks from a config file.
-
+    
     :config_file (str): Path to the NGINX config file.
     :rtype list of dict: Each dict contains 'listen'and 'server_name'.
     """
@@ -58,7 +57,6 @@ def parse_virtual_hosts(config_file):
     with open(config_file, 'r') as f:
         config_text = f.read()
 
-    # Match each host block
     host_blocks = re.findall(r'host\s+"([^"]+)"\s*\{(.*?)\}', config_text, re.DOTALL)
 
     dist_policy_map = ""
@@ -67,32 +65,19 @@ def parse_virtual_hosts(config_file):
     for host, block in host_blocks:
         proxy_map = {}
 
-        # Find all proxy_pass entries
         proxy_passes = re.findall(r'proxy_pass\s+http://([^\s;]+);', block)
         map = proxy_map.get(host,[])
         map = map + proxy_passes
         proxy_map[host] = map
 
-        # Find dist_policy if present
         policy_match = re.search(r'dist_policy\s+(\w+)', block)
         if policy_match:
             dist_policy_map = policy_match.group(1)
-        else: #default policy is round_robin
+        else:
             dist_policy_map = 'round-robin'
             
-        #
-        # @bksysnet: Build the mapping and policy
-        # TODO: this policy varies among scenarios 
-        #       the default policy is provided with one proxy_pass
-        #       In the multi alternatives of proxy_pass then
-        #       the policy is applied to identify the highes matching
-        #       proxy_pass
-        #
         if len(proxy_map.get(host,[])) == 1:
             routes[host] = (proxy_map.get(host,[])[0], dist_policy_map)
-        # esle if:
-        #         TODO:  apply further policy matching here
-        #
         else:
             routes[host] = (proxy_map.get(host,[]), dist_policy_map)
 

@@ -19,17 +19,24 @@ except ImportError:
 
 
 class CaseInsensitiveDict(MutableMapping):
-    """A dictionary where keys are always lowercased.
-
-    HTTP headers are case-insensitive by spec, meaning "Content-Type"
-    and "content-type" should be treated the same. This dict handles
-    that automatically so we never have to worry about casing.
-
+    """
+    The :class:`CaseInsensitiveDict<MutableMapping>` object, which
+    contains a custom behavior of MutuableMapping.
+    
     Usage::
-      >>> d = CaseInsensitiveDict()
-      >>> d['Content-Type'] = 'text/html'
-      >>> d['content-type']
-      'text/html'
+    
+      >>> import tools
+      >>> word = CaseInsensitiveDict(status_code='404', msg="Not found")
+      >>> code = word['status_code']
+      >>> code
+      404
+    
+      >>> msg = word['msg']
+      >>> s.send(r)
+      Not found
+    
+      >>> print(word)
+      {'status_code': '404', 'msg': 'Not found'}
     """
 
     def __init__(self, *args, **kwargs):

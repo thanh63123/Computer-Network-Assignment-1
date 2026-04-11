@@ -14,16 +14,10 @@
 daemon.httpadapter
 ~~~~~~~~~~~~~~~~~
 
-This is the bridge between raw TCP sockets and our Request/Response objects.
-Every incoming connection goes through HttpAdapter -- it reads the raw bytes,
-turns them into a Request, finds the matching route handler, runs it,
-then wraps the result in a proper HTTP Response and sends it back.
-
-We have two versions of handle_client:
-  - handle_client()           => synchronous, used by threading & callback
-  - handle_client_coroutine() => async, used by the coroutine mode
-
-Both do the same thing conceptually, just different I/O styles.
+This module provides a http adapter object to manage and persist
+http settings (headers, bodies). The adapter supports both
+raw URL paths and RESTful route definitions, and integrates with
+Request and Response objects to handle client-server communication.
 """
 
 from .request import Request
@@ -35,16 +29,27 @@ import inspect
 
 
 def get_encoding_from_headers(headers):
-    """For now we just assume UTF-8. Could parse charset from Content-Type later."""
     return 'utf-8'
 
 
 class HttpAdapter:
-    """Sits between the socket layer and our app logic.
-
-    Think of it as the "glue" -- it doesn't know what the app does,
-    it just knows how to read HTTP, call the right handler, and
-    package the response back into valid HTTP bytes.
+    """
+    A mutable :class:`HTTP adapter <HTTP adapter>` for managing client connections
+    and routing requests.
+    
+    The `HttpAdapter` class encapsulates the logic for receiving HTTP requests,
+    dispatching them to appropriate route handlers, and constructing responses.
+    It supports RESTful routing via hooks and integrates with :class:`Request <Request>`
+    and :class:`Response <Response>` objects for full request lifecycle management.
+    
+    Attributes:
+        ip (str): IP address of the client.
+        port (int): Port number of the client.
+        conn (socket): Active socket connection.
+        connaddr (tuple): Address of the connected client.
+        routes (dict): Mapping of route paths to handler functions.
+        request (Request): Request object for parsing incoming data.
+        response (Response): Response object for building and sending replies.
     """
 
     __attrs__ = [
@@ -61,13 +66,6 @@ class HttpAdapter:
         self.response = Response()
 
     def _recv_full_request(self, conn):
-        """Reads a complete HTTP request from the socket.
-
-        HTTP requests can be larger than a single recv() buffer, so we:
-        1. Read until we find the header/body separator (\\r\\n\\r\\n)
-        2. Parse Content-Length from the headers
-        3. Keep reading until we have the full body
-        """
         raw = conn.recv(65536)
         if not raw:
             return None
@@ -103,14 +101,16 @@ class HttpAdapter:
         return (header_bytes + body_so_far).decode('utf-8', errors='ignore')
 
     def handle_client(self, conn, addr, routes):
-        """Synchronous version -- used when mode is threading or callback.
-
-        The flow is pretty straightforward:
-        1. Read raw bytes from socket
-        2. Parse into a Request object (method, path, headers, body)
-        3. Check if any registered route matches
-        4. If yes, call that handler and collect the result
-        5. Package everything into an HTTP response and send it back
+        """
+        Handle an incoming client connection.
+        
+        This method reads the request from the socket, prepares the request object,
+        invokes the appropriate route handler if available, builds the response,
+        and sends it back to the client.
+        
+        :param conn (socket): The client socket connection.
+        :param addr (tuple): The client's address.
+        :param routes (dict): The route mapping for dispatching requests.
         """
         self.conn = conn
         self.connaddr = addr
@@ -128,17 +128,13 @@ class HttpAdapter:
         response_data = None
 
         if req.hook:
-            # The hook is the function registered via @app.route(...)
             result = req.hook(headers=req.headers, body=req.body)
 
-            # Handlers can return a 3-tuple: (body, status_code, extra_headers)
-            # This lets the app set redirects, cookies, auth challenges, etc.
             if isinstance(result, tuple) and len(result) == 3:
                 app_body, app_status, app_headers = result
                 resp._content = app_body if isinstance(app_body, bytes) else b""
                 resp.status_code = app_status
 
-                # Map status codes to their standard reason phrases
                 reasons = {
                     200: "OK", 301: "Moved Permanently", 302: "Found",
                     400: "Bad Request", 401: "Unauthorized", 403: "Forbidden",
@@ -146,7 +142,6 @@ class HttpAdapter:
                 }
                 resp.reason = reasons.get(app_status, "OK")
 
-                # Pull out special headers like Set-Cookie and Location
                 if isinstance(app_headers, dict):
                     for k, v in app_headers.items():
                         if k.lower() == 'set-cookie':
@@ -158,7 +153,6 @@ class HttpAdapter:
 
                 response_data = app_body
 
-            # Simple return: just a dict, string, or bytes => 200 OK
             elif isinstance(result, (dict, str, bytes)):
                 response_data = result
                 resp.status_code = 200
@@ -166,18 +160,11 @@ class HttpAdapter:
             else:
                 response_data = result
 
-        # Let Response handle the final packaging (headers + body)
         response_bytes = resp.build_response(req, envelop_content=response_data)
         conn.sendall(response_bytes)
         conn.close()
 
     async def _read_full_request_async(self, reader):
-        """Reads a complete HTTP request from an asyncio StreamReader.
-
-        Same logic as the sync version but with await for non-blocking I/O.
-        Each connection gets its own coroutine, so multiple large requests
-        are handled concurrently without blocking each other.
-        """
         raw = await reader.read(65536)
         if not raw:
             return None
@@ -214,11 +201,16 @@ class HttpAdapter:
         return (header_bytes + body_so_far).decode('utf-8', errors='ignore')
 
     async def handle_client_coroutine(self, reader, writer):
-        """Async version -- used when mode is coroutine (asyncio).
-
-        Same logic as handle_client() above, but uses await for I/O
-        so the event loop can serve other clients while we wait.
-        Also supports calling async route handlers (like our /slow endpoint).
+        """
+        Handle an incoming client connection using stream reader writer asynchronously.
+        
+        This method reads the request from the socket, prepares the request object,
+        invokes the appropriate route handler if available, builds the response,
+        and sends it back to the client.
+        
+        :param conn (socket): The client socket connection.
+        :param addr (tuple): The client's address.
+        :param routes (dict): The route mapping for dispatching requests.
         """
         addr = writer.get_extra_info("peername")
         print("[HttpAdapter] New async connection from {}".format(addr))
@@ -228,7 +220,6 @@ class HttpAdapter:
             if not incoming_msg:
                 return
 
-            # Fresh Request/Response for each connection
             req = Request()
             req.prepare(incoming_msg, routes=self.routes)
 
@@ -236,14 +227,11 @@ class HttpAdapter:
             response_data = None
 
             if req.hook:
-                # Need to check if the handler is async or sync
-                # because we can't just `await` a regular function
                 if inspect.iscoroutinefunction(req.hook):
                     result = await req.hook(headers=req.headers, body=req.body)
                 else:
                     result = req.hook(headers=req.headers, body=req.body)
 
-                # Same 3-tuple unpacking as the sync version
                 if isinstance(result, tuple) and len(result) == 3:
                     response_data, status_code, extra = result
                     resp.status_code = status_code
@@ -255,7 +243,6 @@ class HttpAdapter:
                     }
                     resp.reason = reasons.get(status_code, "OK")
 
-                    # Extra dict can contain cookies or special headers
                     if isinstance(extra, dict):
                         for k, v in extra.items():
                             if k.lower() == 'set-cookie':
@@ -268,11 +255,9 @@ class HttpAdapter:
                     response_data = result
                     resp.status_code = 200
             else:
-                # No route matched -- try serving as a static file
                 mime_type = resp.get_mime_type(req.path)
                 if 'text/html' in mime_type or 'text/css' in mime_type or \
                    'image/' in mime_type or 'javascript' in mime_type:
-                    # Let build_response() handle file serving
                     response_data = None
                 else:
                     response_data = {"error": "Not Found", "path": req.path}
@@ -295,10 +280,12 @@ class HttpAdapter:
                 pass
 
     def extract_cookies(self, req):
-        """Pulls cookies out of the request's Cookie header (RFC 6265).
-
-        The browser sends something like "Cookie: session=abc; theme=dark"
-        and we split that into {"session": "abc", "theme": "dark"}.
+        """
+        Build cookies from the :class:`Request <Request>` headers.
+        
+        :param req:(Request) The :class:`Request <Request>` object.
+        :param resp: (Response) The res:class:`Response <Response>` object.
+        :rtype: cookies - A dictionary of cookie key-value pairs.
         """
         cookies = {}
         cookie_header = req.headers.get("cookie", "")
@@ -310,7 +297,13 @@ class HttpAdapter:
         return cookies
 
     def build_response(self, req, resp_obj):
-        """Populates a Response object with metadata from the request."""
+        """
+        Builds a :class:`Response <Response>` object
+        
+        :param req: The :class:`Request <Request>` used to generate the response.
+        :param resp: The  response object.
+        :rtype: Response
+        """
         resp_obj.encoding = get_encoding_from_headers(resp_obj.headers)
         resp_obj.reason = "OK"
 
@@ -325,7 +318,13 @@ class HttpAdapter:
         return resp_obj
 
     def build_json_response(self, req, resp_obj):
-        """Same as build_response but for JSON payloads specifically."""
+        """
+        Builds a :class:`Response <Response>` object from JSON data
+        
+        :param req: The :class:`Request <Request>` used to generate the response.
+        :param resp: The  response object.
+        :rtype: Response
+        """
         resp_obj.request = req
         resp_obj.connection = self
 
@@ -337,11 +336,26 @@ class HttpAdapter:
         return resp_obj
 
     def add_headers(self, request):
-        """Hook for subclasses to inject custom headers. Does nothing by default."""
+        """
+        Add headers to the request.
+        
+        This method is intended to be overridden by subclasses to inject
+        custom headers. It does nothing by default.
+        
+        :param request: :class:`Request <Request>` to add headers to.
+        """
         pass
 
     def build_proxy_headers(self, proxy):
-        """Builds authorization headers for requests going through a proxy."""
+        """
+        Returns a dictionary of the headers to add to any request sent
+        through a proxy.
+        
+        :class:`HttpAdapter <HttpAdapter>`.
+        
+        :param proxy: The url of the proxy being used for this request.
+        :rtype: dict
+        """
         headers = {}
         username, password = ("user1", "password")
         if username:

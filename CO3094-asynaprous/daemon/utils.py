@@ -14,14 +14,11 @@ from urllib.parse import urlparse, unquote
 
 
 def get_auth_from_url(url):
-    """Extracts username and password embedded in a URL.
-
-    Some URLs contain credentials like:
-        http://admin:secret@example.com/path
-
-    We use Python's urlparse to pull out the username ("admin")
-    and password ("secret"), and unquote handles percent-encoding
-    (e.g., %40 becomes @).
+    """
+    Given a url with authentication components, extract them into a tuple of
+    username,password.
+    
+    :rtype: (str,str)
     """
     if not url:
         return ("", "")

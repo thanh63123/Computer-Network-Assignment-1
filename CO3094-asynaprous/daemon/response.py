@@ -14,18 +14,11 @@
 daemon.response
 ~~~~~~~~~~~~~~~~~
 
-Constructs valid HTTP/1.1 responses to send back to the client.
+This module provides a :class: `Response <Response>` object to manage and persist
+response settings (cookies, auth, proxies), and to construct HTTP responses
+based on incoming requests.
 
-This module handles three kinds of responses:
-  1. JSON from app handlers  (e.g., {"status": "ok"} from /send-peer)
-  2. HTML from app handlers  (e.g., the login page served as a string)
-  3. Static files            (e.g., /css/messenger.css read from disk)
-
-It also takes care of the important HTTP headers:
-  - Set-Cookie for session management       (RFC 6265)
-  - WWW-Authenticate for Basic Auth         (RFC 7235)
-  - Location for redirects                  (RFC 7231)
-  - Content-Type, Content-Length, Date, etc.
+The current version supports MIME type detection, content loading and header formatting
 """
 import datetime
 import os
@@ -33,17 +26,39 @@ import json
 import mimetypes
 from .dictionary import CaseInsensitiveDict
 
-# This gets prepended to file paths when serving static files.
-# Empty string means "look relative to the working directory".
 BASE_DIR = ""
 
 
 class Response():
-    """Holds everything we need to build an HTTP response.
-
-    After the app handler runs, we populate status_code, headers,
-    cookies, and _content, then build_response() assembles them
-    into the final byte string that goes over the wire.
+    """
+    The :class:`Response <Response>` object, which contains a
+    server's response to an HTTP request.
+    
+    Instances are generated from a :class:`Request <Request>` object, and
+    should not be instantiated manually; doing so may produce undesirable
+    effects.
+    
+    :class:`Response <Response>` object encapsulates headers, content,
+    status code, cookies, and metadata related to the request-response cycle.
+    It is used to construct and serve HTTP responses in a custom web server.
+    
+    :attrs status_code (int): HTTP status code (e.g., 200, 404).
+    :attrs headers (dict): dictionary of response headers.
+    :attrs url (str): url of the response.
+    :attrsencoding (str): encoding used for decoding response content.
+    :attrs history (list): list of previous Response objects (for redirects).
+    :attrs reason (str): textual reason for the status code (e.g., "OK", "Not Found").
+    :attrs cookies (CaseInsensitiveDict): response cookies.
+    :attrs elapsed (datetime.timedelta): time taken to complete the request.
+    :attrs request (PreparedRequest): the original request object.
+    
+    Usage::
+    
+      >>> import Response
+      >>> resp = Response()
+      >>> resp.build_response(req)
+      >>> resp
+      <Response>
     """
 
     __attrs__ = [
@@ -59,20 +74,22 @@ class Response():
         self._next = None
         self.status_code = 200
         self.reason = "OK"
-        self.headers = {}          # Custom headers set by the app
+        self.headers = {}
         self.url = None
         self.encoding = "utf-8"
         self.history = []
-        self.cookies = CaseInsensitiveDict()  # Cookies to send via Set-Cookie
+        self.cookies = CaseInsensitiveDict()
         self.elapsed = datetime.timedelta(0)
         self.request = request
         self.body = None
 
     def get_mime_type(self, path):
-        """Guesses the MIME type from the file extension.
-
-        e.g., ".html" -> "text/html", ".png" -> "image/png"
-        Falls back to "application/octet-stream" for unknown types.
+        """
+        Determines the MIME type of a file based on its path.
+        
+        "params path (str): Path to the file.
+        
+        :rtype str: MIME type string (e.g., 'text/html', 'image/png').
         """
         try:
             mime_type, _ = mimetypes.guess_type(path)
@@ -81,14 +98,15 @@ class Response():
         return mime_type or 'application/octet-stream'
 
     def prepare_content_type(self, mime_type='text/html'):
-        """Figures out which directory to look in based on the content type.
-
-        Our project structure separates files like this:
-          - www/       -> HTML pages
-          - static/    -> CSS, JS, images, fonts, etc.
-
-        So a request for something.html looks in www/,
-        while something.css or something.png looks in static/.
+        """
+        Prepares the Content-Type header and determines the base directory
+        for serving the file based on its MIME type.
+        
+        :params mime_type (str): MIME type of the requested resource.
+        
+        :rtype str: Base directory path for locating the resource.
+        
+        :raises ValueError: If the MIME type is unsupported.
         """
         main_type, sub_type = mime_type.split('/', 1)
         base_dir = ""
@@ -118,10 +136,13 @@ class Response():
         return base_dir
 
     def build_content(self, path, base_dir):
-        """Reads a file from disk and returns its content as bytes.
-
-        Returns (length, content) on success, or (-1, b"") if the file
-        doesn't exist -- the caller uses -1 to know it should send a 404.
+        """
+        Loads the objects file from storage space.
+        
+        :params path (str): relative path to the file.
+        :params base_dir (str): base directory where the file is located.
+        
+        :rtype tuple: (int, bytes) representing content length and content data.
         """
         filename = path.lstrip('/')
         if not filename or filename == 'index.html':
@@ -139,17 +160,16 @@ class Response():
             return -1, b""
 
     def build_response_header(self, request):
-        """Assembles the HTTP response header string.
-
-        This is where all the RFC magic happens:
-          - RFC 7235: if we're sending 401, include WWW-Authenticate
-                      so the browser shows its login popup
-          - RFC 6265: append Set-Cookie for each cookie we want to set
-          - RFC 7231: Location header is already set by the app for redirects
+        """
+        Constructs the HTTP response headers based on the class:`Request <Request>
+        and internal attributes.
+        
+        :params request (class:`Request <Request>`): incoming request object.
+        
+        :rtypes bytes: encoded HTTP response header.
         """
         status_line = "HTTP/1.1 {} {}".format(self.status_code, self.reason)
 
-        # Start with standard headers every response should have
         full_headers = {
             "Date": datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
             "Server": "AsynapRous/1.0",
@@ -157,36 +177,32 @@ class Response():
             "Connection": "close",
         }
 
-        # Merge in whatever the app set (Content-Type, Location, etc.)
         full_headers.update(self.headers)
 
-        # If the app returned 401 but forgot to set WWW-Authenticate,
-        # we add it automatically so the browser knows to show the login dialog
         if self.status_code == 401 and 'WWW-Authenticate' not in full_headers:
             full_headers["WWW-Authenticate"] = 'Basic realm="HCMUT Secure Area"'
 
-        # Build the header lines, but skip Set-Cookie here (handled separately)
         header_lines = [status_line]
         for key, value in full_headers.items():
             if key.lower() != 'set-cookie':
                 header_lines.append("{}: {}".format(key, value))
 
-        # Cookies from self.cookies dict (set by the route handler)
         if self.cookies:
             for key, value in self.cookies.items():
                 header_lines.append("Set-Cookie: {}={}; Path=/".format(key, value))
 
-        # Also check if there's a Set-Cookie directly in self.headers
-        # (used when the app returns it as part of the extra headers dict)
         if 'Set-Cookie' in self.headers:
             header_lines.append("Set-Cookie: {}".format(self.headers['Set-Cookie']))
 
-        # End headers with a blank line before the body
         fmt_header = "\r\n".join(header_lines) + "\r\n\r\n"
         return fmt_header.encode('utf-8')
 
     def build_notfound(self):
-        """Quick 404 response for when we can't find the requested file."""
+        """
+        Constructs a standard 404 Not Found HTTP response.
+        
+        :rtype bytes: Encoded 404 response.
+        """
         body = b"404 Not Found"
         header = (
             "HTTP/1.1 404 Not Found\r\n"
@@ -197,32 +213,28 @@ class Response():
         return header + body
 
     def build_response(self, request, envelop_content=None):
-        """The main method -- builds a complete HTTP response (header + body).
-
-        If envelop_content is provided, that's the app's response data:
-          - dict  => serialize to JSON
-          - str   => treat as HTML
-          - bytes => send raw
-          - None  => fall back to serving a static file from disk
+        """
+        Builds a full HTTP response including headers and content based on the request.
+        
+        :params request (class:`Request <Request>`): incoming request object.
+        
+        :rtype bytes: complete HTTP response using prepared headers and content.
         """
         self.request = request
         path = request.path if request else "/"
 
         if envelop_content is not None:
-            # App gave us a dict -- serialize it as JSON
             if isinstance(envelop_content, dict):
                 json_str = json.dumps(envelop_content, ensure_ascii=False)
                 self._content = json_str.encode(self.encoding)
                 if 'Content-Type' not in self.headers:
                     self.headers['Content-Type'] = 'application/json; charset=utf-8'
 
-            # App gave us a string -- probably HTML content
             elif isinstance(envelop_content, str):
                 self._content = envelop_content.encode(self.encoding)
                 if 'Content-Type' not in self.headers:
                     self.headers['Content-Type'] = 'text/html; charset=utf-8'
 
-            # App gave us raw bytes -- send as-is
             elif isinstance(envelop_content, bytes):
                 self._content = envelop_content
                 if 'Content-Type' not in self.headers:
@@ -231,7 +243,6 @@ class Response():
             else:
                 self._content = str(envelop_content).encode(self.encoding)
         else:
-            # No app content -- try to serve the path as a static file
             mime_type = self.get_mime_type(path)
             base_dir = self.prepare_content_type(mime_type)
             length, content = self.build_content(path, base_dir)

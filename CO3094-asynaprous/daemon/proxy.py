@@ -14,18 +14,17 @@
 daemon.proxy
 ~~~~~~~~~~~~~~~~~
 
-A reverse proxy that sits between clients and backend servers.
+This module implements a simple proxy server using Python's socket and threading libraries.
+It routes incoming HTTP requests to backend services based on hostname mappings and returns
+the corresponding responses to clients.
 
-The idea is simple: client sends a request to us, we look at the Host
-header to figure out which backend should handle it, forward the request
-there, get the response, and pipe it back to the client.
-
-For non-blocking behavior, we use one thread per client connection.
-This way the main accept() loop never gets stuck waiting for a slow
-backend -- each client is handled independently in its own thread.
-
-The routing config comes from proxy.conf and supports round-robin
-load balancing when multiple backends are listed for the same host.
+Requirement:
+-----------------
+- socket: provides socket networking interface.
+- threading: enables concurrent client handling via threads.
+- response: customized :class: `Response <Response>` utilities.
+- httpadapter: :class: `HttpAdapter <HttpAdapter >` adapter for HTTP request processing.
+- dictionary: :class: `CaseInsensitiveDict <CaseInsensitiveDict>` for managing headers and cookies.
 """
 
 import socket
@@ -34,24 +33,25 @@ from .response import Response
 from .httpadapter import HttpAdapter
 from .dictionary import CaseInsensitiveDict
 
-# Default routing table (overridden by proxy.conf at runtime)
 PROXY_PASS = {
     "192.168.56.103:8080": ('192.168.56.103', 9000),
     "app1.local": ('192.168.56.103', 9001),
     "app2.local": ('192.168.56.103', 9002),
 }
 
-# Tracks the current index for round-robin per hostname.
-# e.g., {"app2.local": 1} means the next request goes to backend #1
 routing_counters = {}
 
 
 def forward_request(host, port, request):
-    """Opens a TCP connection to the backend and relays the request.
-
-    We send the raw HTTP request as-is (no modification), then read
-    the response in chunks until the backend closes the connection.
-    If the backend is down, we return a 502 Bad Gateway.
+    """
+    Forwards an HTTP request to a backend server and retrieves the response.
+    
+    :params host (str): IP address of the backend server.
+    :params port (int): port number of the backend server.
+    :params request (str): incoming HTTP request.
+    
+    :rtype bytes: Raw HTTP response from the backend server. If the connection
+                  fails, returns a 404 Not Found response.
     """
     backend = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -79,15 +79,16 @@ def forward_request(host, port, request):
 
 
 def resolve_routing_policy(hostname, routes):
-    """Given a hostname, figures out which backend to send the request to.
-
-    If there are multiple backends for one hostname (load balancing),
-    we rotate through them using round-robin: first request goes to
-    backend 0, next to backend 1, then back to 0, etc.
+    """
+    Handles an routing policy to return the matching proxy_pass.
+    It determines the target backend to forward the request to.
+    
+    :params host (str): IP address of the request target server.
+    :params port (int): port number of the request target server.
+    :params routes (dict): dictionary mapping hostnames and location.
     """
     target_info = routes.get(hostname)
 
-    # Unknown host -- fall back to localhost:9000
     if not target_info:
         return '127.0.0.1', '9000'
 
@@ -97,31 +98,39 @@ def resolve_routing_policy(hostname, routes):
         if len(proxy_map) == 0:
             return '127.0.0.1', '9000'
 
-        # Pick the next backend in the round-robin rotation
         idx = routing_counters.get(hostname, 0)
         target = proxy_map[idx]
-        # Advance the counter for next time, wrapping around
         routing_counters[hostname] = (idx + 1) % len(proxy_map)
         proxy_host, proxy_port = target.split(":", 1)
     else:
-        # Only one backend -- no load balancing needed
         proxy_host, proxy_port = proxy_map.split(":", 1)
 
     return proxy_host, proxy_port
 
 
 def handle_client(ip, port, conn, addr, routes):
-    """Runs in its own thread -- handles one client from start to finish.
-
-    We read the request, pull out the Host header to figure out where
-    to forward it, then relay the backend's response back to the client.
+    """
+    Handles an individual client connection by parsing the request,
+    determining the target backend, and forwarding the request.
+    
+    The handler extracts the Host header from the request to
+    matches the hostname against known routes. In the matching
+    condition,it forwards the request to the appropriate backend.
+    
+    The handler sends the backend response back to the client or
+    returns 404 if the hostname is unreachable or is not recognized.
+    
+    :params ip (str): IP address of the proxy server.
+    :params port (int): port number of the proxy server.
+    :params conn (socket.socket): client connection socket.
+    :params addr (tuple): client address (IP, port).
+    :params routes (dict): dictionary mapping hostnames and location.
     """
     try:
         data = conn.recv(4096).decode()
         if not data:
             return
 
-        # The Host header tells us which backend this request is for
         hostname = ""
         for line in data.splitlines():
             if line.lower().startswith('host:'):
@@ -149,14 +158,18 @@ def handle_client(ip, port, conn, addr, routes):
 
 
 def run_proxy(ip, port, routes):
-    """Main proxy loop -- accepts connections and spawns a thread for each.
-
-    This is our non-blocking mechanism for the proxy: the main thread
-    only does accept(), and each client gets its own thread. So even
-    if one backend is slow, other clients aren't blocked.
+    """
+    Starts the proxy server and listens for incoming connections.
+    
+    The process dinds the proxy server to the specified IP and port.
+    In each incomping connection, it accepts the connections and
+    spawns a new thread for each client using `handle_client`.
+    
+    :params ip (str): IP address to bind the proxy server.
+    :params port (int): port number to listen on.
+    :params routes (dict): dictionary mapping hostnames and location.
     """
     proxy = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # Lets us restart without getting "address already in use"
     proxy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
@@ -166,11 +179,10 @@ def run_proxy(ip, port, routes):
 
         while True:
             conn, addr = proxy.accept()
-            # Each client gets its own thread so the proxy stays responsive
             client_thread = threading.Thread(
                 target=handle_client,
                 args=(ip, port, conn, addr, routes),
-                daemon=True   # Auto-cleanup when main process exits
+                daemon=True
             )
             client_thread.start()
 
@@ -181,5 +193,11 @@ def run_proxy(ip, port, routes):
 
 
 def create_proxy(ip, port, routes):
-    """Entry point -- called from start_proxy.py."""
+    """
+    Entry point for launching the proxy server.
+    
+    :params ip (str): IP address to bind the proxy server.
+    :params port (int): port number to listen on.
+    :params routes (dict): dictionary mapping hostnames and location.
+    """
     run_proxy(ip, port, routes)

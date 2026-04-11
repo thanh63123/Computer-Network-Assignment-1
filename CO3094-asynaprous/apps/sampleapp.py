@@ -7,20 +7,8 @@
 #
 
 """
-apps.sampleapp
+app.sampleapp
 ~~~~~~~~~~~~~~~~~
-
-A small demo app to test the AsynapRous framework.
-Has a few endpoints that show different features:
-  - /admin   => Basic Auth (browser popup)
-  - /login   => Form-based login with cookies
-  - /echo    => Echoes back whatever JSON you send
-  - /hello   => Async handler returning user data
-  - /slow    => Sleeps 10 seconds to prove non-blocking works
-
-The /slow endpoint is the best way to verify async behavior:
-open two browser tabs, hit /slow in one and /hello in the other --
-you'll see /hello responds instantly even though /slow is still waiting.
 """
 
 import json
@@ -31,7 +19,6 @@ from daemon import AsynapRous
 
 app = AsynapRous()
 
-# Simple user database for testing
 USER_DB = {
     "admin": "admin123",
     "alice": "alice123",
@@ -40,7 +27,6 @@ USER_DB = {
 
 
 def get_basic_auth_creds(auth_header):
-    """Pulls username:password out of the Base64-encoded auth header."""
     if not auth_header or not auth_header.startswith('Basic '):
         return None, None
     try:
@@ -52,7 +38,6 @@ def get_basic_auth_creds(auth_header):
 
 
 def parse_form_body(body):
-    """Splits "username=admin&password=123" into a dict."""
     params = {}
     if isinstance(body, bytes):
         body = body.decode('utf-8')
@@ -66,9 +51,6 @@ def parse_form_body(body):
 
 @app.route('/admin', methods=['GET'])
 def admin_route(headers, body):
-    """If you have the right credentials, you get redirected to form.html.
-    Otherwise the browser shows its built-in login popup (RFC 7235).
-    """
     auth_header = headers.get('authorization', '')
     user, pw = get_basic_auth_creds(auth_header)
 
@@ -82,7 +64,15 @@ def admin_route(headers, body):
 
 @app.route('/login', methods=['POST'])
 def login(headers="guest", body="anonymous"):
-    """Cookie-based login: check credentials, set a session cookie on success."""
+    """
+    Handle user login via POST request.
+    
+    This route simulates a login process and prints the provided headers and body
+    to the console.
+    
+    :param headers (str): The request headers or user identifier.
+    :param body (str): The request body or login payload.
+    """
     params = parse_form_body(body) if isinstance(body, str) else body
 
     username = params.get('username', '')
@@ -99,7 +89,6 @@ def login(headers="guest", body="anonymous"):
 
 @app.route("/echo", methods=["POST"])
 def echo(headers="guest", body="anonymous"):
-    """Whatever JSON you POST, we send it right back. Useful for testing."""
     try:
         message = json.loads(body) if isinstance(body, str) else body
         return {"received": message}, 200, {}
@@ -109,20 +98,21 @@ def echo(headers="guest", body="anonymous"):
 
 @app.route('/hello', methods=['PUT'])
 async def hello(headers, body):
-    """An async handler -- shows that our framework supports coroutines."""
+    """
+    Handle greeting via PUT request.
+    
+    This route prints a greeting message to the console using the provided headers
+    and body.
+    
+    :param headers (str): The request headers or user identifier.
+    :param body (str): The request body or message payload.
+    """
     data = {"id": 1, "name": "Alice", "email": "alice@example.com"}
     return data, 200, {}
 
 
 @app.route('/slow', methods=['GET'])
 async def slow_request(headers, body):
-    """Sleeps 10 seconds to prove the server doesn't block.
-
-    While this request is "sleeping", other requests (like /hello)
-    are still served normally. That's the whole point of non-blocking I/O.
-    Try opening two tabs: one with /slow, one with /hello -- /hello
-    will respond instantly even though /slow is still waiting.
-    """
     print("[SampleApp] Processing slow request (10 seconds)...")
     await asyncio.sleep(10)
     print("[SampleApp] Slow request completed!")
