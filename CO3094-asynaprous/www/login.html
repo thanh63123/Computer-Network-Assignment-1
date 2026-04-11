@@ -185,45 +185,7 @@
             font-weight: 700;
         }
 
-        .divider {
-            text-align: center;
-            margin: 16px 0;
-            position: relative;
-            color: #949ba4;
-            font-size: 12px;
-            text-transform: uppercase;
-            font-weight: 600;
-        }
 
-        .divider::before, .divider::after {
-            content: '';
-            position: absolute;
-            top: 50%;
-            width: 40%;
-            height: 1px;
-            background: #4e5058;
-        }
-
-        .divider::before { left: 0; }
-        .divider::after { right: 0; }
-
-        .btn-admin {
-            width: 100%;
-            padding: 10px;
-            background: transparent;
-            color: #b5bac1;
-            border: 1px solid #4e5058;
-            border-radius: 3px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .btn-admin:hover {
-            background: #4e505826;
-            border-color: #b5bac1;
-        }
 
         .demo-hint {
             background: #2b2d31;
@@ -272,10 +234,6 @@
 
                 <p class="register-link">Need an account? <a href="/signup">Register</a></p>
 
-                <div class="divider">or</div>
-                <a href="/admin" style="text-decoration:none">
-                    <button type="button" class="btn-admin">Admin Login (Basic Auth)</button>
-                </a>
 
                 <div class="demo-hint">
                     <strong>Demo:</strong> alice/alice123 &bull; bob/bob123 &bull; charlie/charlie123
