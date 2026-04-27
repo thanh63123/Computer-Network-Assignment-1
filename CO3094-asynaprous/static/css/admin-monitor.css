@@ -1,7 +1,4 @@
-/* =======================================
-   Admin Monitor Dashboard — CSS
-   Discord-inspired dark theme
-   ======================================= */
+/*Admin Monitor — dark theme*/
 
 :root {
     --bg-primary: #313338;
@@ -40,7 +37,7 @@ html, body {
     color: var(--text-primary);
 }
 
-/* ======= Layout ======= */
+/*layout*/
 
 .monitor-app {
     display: flex;
@@ -48,7 +45,7 @@ html, body {
     width: 100%;
 }
 
-/* ======= Sidebar ======= */
+/*sidebar*/
 
 .monitor-sidebar {
     width: 280px;
@@ -219,7 +216,7 @@ html, body {
     flex-shrink: 0;
 }
 
-/* ======= User Bar ======= */
+/*user bar*/
 
 .monitor-user-bar {
     padding: 8px 10px;
@@ -297,7 +294,7 @@ html, body {
     height: 18px;
 }
 
-/* ======= Chat View ======= */
+/*chat view*/
 
 .monitor-main {
     flex: 1;
@@ -362,7 +359,7 @@ html, body {
     background: var(--accent-hover);
 }
 
-/* ======= Messages ======= */
+/*messages*/
 
 .monitor-messages {
     flex: 1;
@@ -546,7 +543,7 @@ html, body {
     margin-left: 4px;
 }
 
-/* ======= Input Area ======= */
+/*input*/
 
 .monitor-input-area {
     padding: 0 16px 20px;
@@ -603,7 +600,7 @@ html, body {
     height: 22px;
 }
 
-/* ======= Stats Bar ======= */
+/*stats bar*/
 
 .monitor-stats {
     display: flex;
@@ -638,7 +635,7 @@ html, body {
 .stat-dot.msg { background: var(--orange); }
 .stat-dot.dm { background: #e91e63; }
 
-/* ======= No messages ======= */
+/*no messages*/
 
 .no-messages {
     display: flex;
@@ -661,7 +658,7 @@ html, body {
     font-size: 14px;
 }
 
-/* ======= Toast ======= */
+/*toast*/
 
 .toast-container {
     position: fixed;
@@ -694,7 +691,7 @@ html, body {
     to { opacity: 0; transform: translateY(-10px); }
 }
 
-/* ======= Responsive ======= */
+/*responsive*/
 
 @media (max-width: 700px) {
     .monitor-sidebar {
@@ -706,7 +703,7 @@ html, body {
     }
 }
 
-/* ======= Users Panel (Right Sidebar) ======= */
+/*users panel*/
 
 .users-panel {
     width: 260px;
@@ -869,7 +866,7 @@ html, body {
     background: var(--bg-tertiary);
 }
 
-/* ======= DM Duo Avatars ======= */
+/*dm duo avatars*/
 
 .dm-duo {
     display: flex;

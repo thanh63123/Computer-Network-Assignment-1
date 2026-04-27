@@ -1,20 +1,13 @@
-/**
- * BK Discordmess — Admin Monitor Dashboard
- *
- * This page is only accessible to admins from 127.0.0.1 (localhost).
- * It shows ALL conversations on the server: every channel message and
- * every DM between every user. The admin can also send messages.
- *
- * Polls /admin/all-conversations every 2s to stay updated.
- */
+//Admin Monitor Dashboard
+//admin-only, localhost-only. shows all convos, polls every 2s.
 
 let currentUser = null;
 let sessionToken = null;
-let currentConv = null;      // { type:'channel', server, channel } or { type:'dm', key, users }
+let currentConv = null;      //{type:'channel', server, channel} or {type:'dm', key, users}
 let allChannels = [];
 let allDMs = [];
 let allUsers = [];
-let localCache = {};          // key -> { messages:[], lastCount:0 }
+let localCache = {};          //key -> { messages:[], lastCount:0 }
 let pollingInterval = null;
 let heartbeatInterval = null;
 
@@ -27,7 +20,7 @@ const COLORS = [
     '#1abc9c', '#e91e63', '#9b59b6',
 ];
 
-// ======= Helpers =======
+//helpers
 
 function avatarColor(name) {
     var h = 0;
@@ -70,6 +63,7 @@ function timeAgo(ts) {
 
 function convKey(conv) {
     if (!conv) return '';
+    if (conv.type === 'global') return 'global';
     return conv.type === 'channel'
         ? 'ch:' + conv.server + '/' + conv.channel
         : 'dm:' + conv.key;
@@ -84,7 +78,7 @@ function showToast(msg) {
     setTimeout(function() { t.remove(); }, 3000);
 }
 
-// ======= API =======
+//api
 
 async function apiGet(path) {
     try {
@@ -110,7 +104,7 @@ async function apiPost(path, body) {
     } catch (e) { return null; }
 }
 
-// ======= Init =======
+//init
 
 async function init() {
     sessionToken = localStorage.getItem('session_token');
@@ -126,14 +120,14 @@ async function init() {
         localStorage.setItem('session_token', me.token);
     }
 
-    // Set user info in sidebar
+    //user info
     document.getElementById('monitorUserName').innerHTML =
         esc(currentUser) + ' <span class="admin-tag">ADMIN</span>';
     var av = document.getElementById('monitorUserAvatar');
     av.textContent = initial(currentUser);
     av.style.background = avatarColor(currentUser);
 
-    // Register online
+    //go online
     var serverPort = parseInt(window.location.port) || 80;
     await apiPost('/submit-info', {
         ip: window.location.hostname || '127.0.0.1',
@@ -147,7 +141,7 @@ async function init() {
     startHeartbeat();
 }
 
-// ======= Data Fetching =======
+//data fetching
 
 async function fetchAllConversations() {
     var data = await apiGet('/admin/all-conversations');
@@ -157,13 +151,13 @@ async function fetchAllConversations() {
     allDMs = data.direct_messages || [];
     allUsers = data.users || [];
 
-    // Update stats bar
+    //stats + users panel
     updateStats();
 
-    // Update online users panel
+
     renderOnlineUsers();
 
-    // If we're viewing a conversation, check for new messages
+    //refresh current chat if new msgs
     if (currentConv) {
         var key = convKey(currentConv);
         var cached = localCache[key];
@@ -176,13 +170,31 @@ async function fetchAllConversations() {
         }
     }
 
-    // Re-render sidebar to update counts
+    //refresh sidebar counts
     renderSidebar();
 }
 
 function getMessagesForCurrent() {
     if (!currentConv) return [];
-    if (currentConv.type === 'channel') {
+    if (currentConv.type === 'global') {
+        var allMsgs = [];
+        allChannels.forEach(function(c) {
+            c.messages.forEach(function(m) {
+                var msgCopy = Object.assign({}, m);
+                msgCopy._context = '#' + c.channel + ' (' + c.server + ')';
+                allMsgs.push(msgCopy);
+            });
+        });
+        allDMs.forEach(function(d) {
+            d.messages.forEach(function(m) {
+                var msgCopy = Object.assign({}, m);
+                msgCopy._context = 'DM: ' + d.users.join(' ↔ ');
+                allMsgs.push(msgCopy);
+            });
+        });
+        allMsgs.sort(function(a, b) { return a.timestamp - b.timestamp; });
+        return allMsgs;
+    } else if (currentConv.type === 'channel') {
         var ch = allChannels.find(function(c) {
             return c.server === currentConv.server && c.channel === currentConv.channel;
         });
@@ -208,7 +220,7 @@ function updateStats() {
     document.getElementById('statDmMsgs').textContent = totalDm;
 }
 
-// ======= Online Users Panel =======
+//online users panel
 
 function renderOnlineUsers() {
     var container = document.getElementById('onlineUsersList');
@@ -219,7 +231,7 @@ function renderOnlineUsers() {
 
     var html = '';
 
-    // Online section
+
     html += '<div class="users-section-label">Online \u2014 ' + online.length + '</div>';
     if (online.length === 0) {
         html += '<div class="users-empty">No users online</div>';
@@ -250,7 +262,7 @@ function renderOnlineUsers() {
         '</div>';
     });
 
-    // Offline section
+
     html += '<div class="users-section-label" style="margin-top:12px">Offline \u2014 ' + offline.length + '</div>';
     offline.forEach(function(u) {
         var color = avatarColor(u.username);
@@ -275,7 +287,7 @@ function renderOnlineUsers() {
 }
 
 function openDMWithUser(username) {
-    // Find an existing DM with this user, or create a key
+    //find or create DM key
     var existingDM = allDMs.find(function(d) {
         return d.users.indexOf(username) !== -1 && d.users.indexOf(currentUser) !== -1;
     });
@@ -283,27 +295,42 @@ function openDMWithUser(username) {
     if (existingDM) {
         openDM(existingDM.key, existingDM.users);
     } else {
-        // Create a key for a new DM
         var users = [currentUser, username].sort();
         var key = users.join(':');
         openDM(key, users);
     }
 }
 
-// ======= Sidebar Rendering =======
+//sidebar
 
 function renderSidebar() {
     var container = document.getElementById('sidebarSections');
     container.innerHTML = '';
 
-    // Channel section
+    //Global Feed
+    var globalLabel = document.createElement('div');
+    globalLabel.className = 'section-label';
+    globalLabel.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>' +
+        '<span>Global Stream</span>';
+    container.appendChild(globalLabel);
+
+    var globalItem = document.createElement('div');
+    var isGlobalActive = currentConv && currentConv.type === 'global';
+    globalItem.className = 'conv-item' + (isGlobalActive ? ' active' : '');
+    globalItem.onclick = function() { openGlobalLog(); };
+    globalItem.innerHTML =
+        '<span class="conv-icon" style="font-size:12px;">🌐</span>' +
+        '<span class="conv-name">All Messages Feed</span>';
+    container.appendChild(globalItem);
+
+    //channels
     var chLabel = document.createElement('div');
     chLabel.className = 'section-label';
     chLabel.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>' +
         '<span>Text Channels (' + allChannels.length + ')</span>';
     container.appendChild(chLabel);
 
-    // Group channels by server
+    //group by server
     var serverMap = {};
     allChannels.forEach(function(c) {
         if (!serverMap[c.server]) serverMap[c.server] = [];
@@ -335,7 +362,7 @@ function renderSidebar() {
         });
     });
 
-    // DM section
+    //DMs
     var dmLabel = document.createElement('div');
     dmLabel.className = 'section-label';
     dmLabel.style.marginTop = '8px';
@@ -362,7 +389,7 @@ function renderSidebar() {
         var color2 = dm.users.length > 1 ? avatarColor(dm.users[1]) : color1;
         var badge = dm.count > 0 ? '<span class="conv-badge">' + dm.count + '</span>' : '';
 
-        // Show two overlapping avatars for DMs
+
         item.innerHTML =
             '<div class="dm-duo">' +
                 '<div class="dm-avatar-small" style="background:' + color1 + '">' + initial(dm.users[0]) + '</div>' +
@@ -374,7 +401,25 @@ function renderSidebar() {
     });
 }
 
-// ======= Open Conversations =======
+//open convos
+
+function openGlobalLog() {
+    currentConv = { type: 'global' };
+    var key = convKey(currentConv);
+    var msgs = getMessagesForCurrent();
+    localCache[key] = { messages: msgs, lastCount: msgs.length };
+
+    document.getElementById('chatHeaderIcon').textContent = '🌐';
+    document.getElementById('chatHeaderTitle').textContent = 'Global Feed';
+    document.getElementById('chatHeaderSub').textContent = 'All channels and DMs';
+
+    document.getElementById('monitorInputArea').classList.add('hidden');
+    document.getElementById('monitorWelcome').style.display = 'none';
+    document.getElementById('monitorMsgsInner').style.display = '';
+
+    renderCurrentMessages();
+    renderSidebar();
+}
 
 function openChannel(server, channel) {
     currentConv = { type: 'channel', server: server, channel: channel };
@@ -382,18 +427,18 @@ function openChannel(server, channel) {
     var msgs = getMessagesForCurrent();
     localCache[key] = { messages: msgs, lastCount: msgs.length };
 
-    // Update header
+    //header
     document.getElementById('chatHeaderIcon').textContent = '#';
     document.getElementById('chatHeaderTitle').textContent = channel;
     document.getElementById('chatHeaderSub').textContent = server;
 
-    // Update input placeholder
+
     document.getElementById('monitorInput').placeholder = 'Message #' + channel + ' as Admin';
 
-    // Show input area
+
     document.getElementById('monitorInputArea').classList.remove('hidden');
 
-    // Hide welcome
+
     document.getElementById('monitorWelcome').style.display = 'none';
     document.getElementById('monitorMsgsInner').style.display = '';
 
@@ -423,7 +468,7 @@ function openDM(dmKey, users) {
     renderSidebar();
 }
 
-// ======= Message Rendering =======
+//message rendering
 
 function renderCurrentMessages() {
     var container = document.getElementById('monitorMsgsInner');
@@ -433,8 +478,16 @@ function renderCurrentMessages() {
 
     if (!currentConv) return;
 
-    // Welcome header
-    if (currentConv.type === 'channel') {
+
+    if (currentConv.type === 'global') {
+        var welcome = document.createElement('div');
+        welcome.className = 'ch-welcome';
+        welcome.innerHTML =
+            '<div class="ch-icon">🌐</div>' +
+            '<h3>Global Feed</h3>' +
+            '<p>Real-time view of all messages sent on the server</p>';
+        container.appendChild(welcome);
+    } else if (currentConv.type === 'channel') {
         var welcome = document.createElement('div');
         welcome.className = 'ch-welcome';
         welcome.innerHTML =
@@ -470,7 +523,8 @@ function renderCurrentMessages() {
         var prev = i > 0 ? msgs[i - 1] : null;
         var isGroupStart = !prev ||
             prev.sender !== msg.sender ||
-            (msg.timestamp - prev.timestamp) > MSG_GROUP_GAP;
+            (msg.timestamp - prev.timestamp) > MSG_GROUP_GAP ||
+            (currentConv.type === 'global' && prev._context !== msg._context);
 
         var div = document.createElement('div');
         div.className = 'msg-row' + (isGroupStart ? ' msg-start' : '');
@@ -484,6 +538,9 @@ function renderCurrentMessages() {
             html += '<div class="msg-meta">';
             html += '<span class="msg-sender">' + esc(msg.sender);
             if (msg.sender === currentUser) html += ' <span class="inline-badge">YOU</span>';
+            if (currentConv.type === 'global') {
+                html += ' <span style="font-size: 11px; font-weight: 400; color: var(--text-muted); margin-left: 6px;">in ' + esc(msg._context) + '</span>';
+            }
             html += '</span>';
             html += '<span class="msg-time">' + formatTime(msg.timestamp) + '</span>';
             html += '</div>';
@@ -508,7 +565,7 @@ function scrollToBottom() {
     container.scrollTop = container.scrollHeight;
 }
 
-// ======= Sending Messages =======
+//send
 
 async function sendMonitorMessage() {
     var input = document.getElementById('monitorInput');
@@ -543,7 +600,7 @@ async function sendMonitorMessage() {
     }
 }
 
-// ======= Polling =======
+//polling
 
 function startPolling() {
     if (pollingInterval) clearInterval(pollingInterval);
@@ -559,7 +616,7 @@ function startHeartbeat() {
     }, HEARTBEAT_MS);
 }
 
-// ======= Search =======
+//search
 
 function filterMonitorSidebar() {
     var q = (document.getElementById('monitorSearch') || {}).value;
@@ -571,14 +628,14 @@ function filterMonitorSidebar() {
     });
 }
 
-// ======= Panels =======
+//panels
 
 function toggleUsersPanel() {
     var panel = document.getElementById('usersPanel');
     panel.classList.toggle('hidden');
 }
 
-// ======= Logout =======
+//logout
 
 async function handleMonitorLogout() {
     await apiPost('/logout', {});
@@ -588,12 +645,12 @@ async function handleMonitorLogout() {
     window.location.href = '/login';
 }
 
-// ======= Switch to chat =======
+//switch to chat
 
 function switchToChat() {
     window.location.href = '/chat.html';
 }
 
-// ======= Start =======
+//start
 
 document.addEventListener('DOMContentLoaded', init);

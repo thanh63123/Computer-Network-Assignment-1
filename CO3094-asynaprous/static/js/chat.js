@@ -1,9 +1,5 @@
-/**
- * BK Discordmess -- Discord-style chat client
- *
- * Layout: server strip | channel/DM sidebar | chat area | members panel
- * Polls /messages every 2s, heartbeats every 30s.
- */
+//BK Discordmess chat client
+//polls /messages every 2s, heartbeats every 30s.
 
 let currentUser = null;
 let currentUserRole = 'user';
@@ -18,6 +14,7 @@ let heartbeatInterval = null;
 let isLoadingMessages = false;
 let knownAdminUsers = new Set();
 let membersVisible = false;
+let unreadCounts = {};
 
 const POLL_MS = 2000;
 const HEARTBEAT_MS = 30000;
@@ -49,6 +46,38 @@ function chatKey(chat) {
     return chat.type === 'channel'
         ? 'ch:' + chat.server + '/' + chat.channel
         : 'dm:' + chat.name;
+}
+
+//unread helpers
+
+function getUnread(key) { return unreadCounts[key] || 0; }
+
+function addUnread(key, count) {
+    unreadCounts[key] = (unreadCounts[key] || 0) + count;
+}
+
+function clearUnread(key) { delete unreadCounts[key]; }
+
+function badgeText(n) {
+    if (n <= 0) return '';
+    return n > 999 ? '999+' : String(n);
+}
+
+function makeBadgeHTML(count) {
+    if (count <= 0) return '';
+    return '<span class="unread-badge">' + badgeText(count) + '</span>';
+}
+
+//sum unreads across server channels
+function serverUnreadTotal(serverName) {
+    var srv = serverList.find(function(s) { return s.name === serverName; });
+    if (!srv) return 0;
+    var total = 0;
+    (srv.channels || []).forEach(function(ch) {
+        var chName = ch.name || ch;
+        total += getUnread('ch:' + serverName + '/' + chName);
+    });
+    return total;
 }
 
 function msgKey(msg) { return msg.sender + '|' + msg.timestamp + '|' + msg.message; }
@@ -92,7 +121,7 @@ function getCache(id) {
 function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
 function showModal(id) { document.getElementById(id).classList.remove('hidden'); }
 
-// ======= Theme =======
+//theme
 
 function initTheme() {
     var saved = localStorage.getItem('bk-theme') || 'dark';
@@ -117,7 +146,7 @@ function updateThemeIcon(theme) {
     }
 }
 
-// ======= API =======
+//api
 
 async function apiGet(path) {
     try {
@@ -143,7 +172,7 @@ async function apiPost(path, body) {
     } catch (e) { return null; }
 }
 
-// ======= Init =======
+//init
 
 async function init() {
     initTheme();
@@ -166,6 +195,10 @@ async function init() {
 
     if (currentUserRole === 'admin') {
         document.getElementById('adminBtn').style.display = '';
+        var monitorBtn = document.getElementById('monitorBtn');
+        if (monitorBtn && window.location.hostname === '127.0.0.1') {
+            monitorBtn.style.display = '';
+        }
         knownAdminUsers.add(currentUser);
         document.getElementById('userName').innerHTML =
             esc(currentUser) + ' <span class="admin-badge">ADMIN</span>';
@@ -184,7 +217,7 @@ async function init() {
     startHeartbeat();
 }
 
-// ======= Servers =======
+//servers
 
 async function loadServers() {
     var data = await apiGet('/servers');
@@ -200,12 +233,27 @@ function renderServerStrip() {
         var icon = document.createElement('div');
         icon.className = 'server-icon' + (currentView === srv.name ? ' active' : '');
         icon.title = srv.name;
-        icon.textContent = initial(srv.name);
         icon.style.background = currentView === srv.name ? '' : avatarColor(srv.name);
         icon.style.color = '#fff';
         icon.onclick = function() { selectView(srv.name); };
+
+        var total = serverUnreadTotal(srv.name);
+        icon.innerHTML = esc(initial(srv.name)) + makeBadgeHTML(total);
+
         list.appendChild(icon);
     });
+
+    //DM total on home icon
+    var dmBtn = document.getElementById('dmNavBtn');
+    var dmTotal = 0;
+    Object.keys(unreadCounts).forEach(function(k) {
+        if (k.startsWith('dm:')) dmTotal += unreadCounts[k];
+    });
+    var existingBadge = dmBtn.querySelector('.unread-badge');
+    if (existingBadge) existingBadge.remove();
+    if (dmTotal > 0) {
+        dmBtn.insertAdjacentHTML('beforeend', makeBadgeHTML(dmTotal));
+    }
 }
 
 function showCreateServerModal() {
@@ -228,7 +276,7 @@ async function createServer() {
     }
 }
 
-// ======= View Switching =======
+//view switching
 
 function selectView(view) {
     currentView = view;
@@ -251,7 +299,7 @@ function selectView(view) {
     }
 }
 
-// ======= DM Sidebar =======
+//dm sidebar
 
 async function renderDMSidebar() {
     var header = document.getElementById('sidebarHeader');
@@ -279,17 +327,21 @@ async function renderDMSidebar() {
         item.onclick = function() { openDM(dm.name); };
 
         var color = avatarColor(dm.name);
+        var dmUnread = getUnread('dm:' + dm.name);
+        if (dmUnread > 0) item.classList.add('has-unread');
+
         item.innerHTML =
             '<div class="dm-avatar" style="background:' + color + '">' +
                 initial(dm.name) +
                 '<div class="status-dot ' + (dm.online ? 'online' : '') + '"></div>' +
             '</div>' +
-            '<span class="dm-name">' + esc(dm.display_name || dm.name) + '</span>';
+            '<span class="dm-name">' + esc(dm.display_name || dm.name) + '</span>' +
+            makeBadgeHTML(dmUnread);
         content.appendChild(item);
     });
 }
 
-// ======= Server Sidebar =======
+//server sidebar
 
 function renderServerSidebar(serverName) {
     var srv = serverList.find(function(s) { return s.name === serverName; });
@@ -322,9 +374,13 @@ function renderServerSidebar(serverName) {
             currentChat.server === serverName && currentChat.channel === chName;
         item.className = 'channel-item' + (isActive ? ' active' : '');
         item.onclick = function() { openChannel(serverName, chName); };
+        var chUnread = getUnread('ch:' + serverName + '/' + chName);
+        if (chUnread > 0) item.classList.add('has-unread');
+
         item.innerHTML =
             '<span class="hash">#</span>' +
-            '<span class="channel-item-name">' + esc(chName) + '</span>';
+            '<span class="channel-item-name">' + esc(chName) + '</span>' +
+            makeBadgeHTML(chUnread);
         content.appendChild(item);
     });
 }
@@ -351,7 +407,7 @@ async function createChannel() {
     }
 }
 
-// ======= Open Chat =======
+//open chat
 
 function openChannel(serverName, channelName) {
     var newKey = 'ch:' + serverName + '/' + channelName;
@@ -373,9 +429,11 @@ function openChannel(serverName, channelName) {
     var delBtn = document.getElementById('deleteChannelBtn');
     delBtn.style.display = (currentUserRole === 'admin') ? '' : 'none';
 
+    clearUnread(newKey);
     renderCached(newKey);
     fetchMessages(true);
     renderServerSidebar(serverName);
+    renderServerStrip();
     if (membersVisible) loadMembers();
 }
 
@@ -408,10 +466,12 @@ function openDM(username) {
     document.getElementById('deleteChannelBtn').style.display = 'none';
     document.getElementById('membersToggle').style.display = 'none';
 
+    clearUnread(newKey);
     renderCached(newKey);
     apiPost('/connect-peer', { target: username });
     fetchMessages(true);
     renderDMSidebar();
+    renderServerStrip();
 }
 
 function renderCached(key) {
@@ -423,7 +483,7 @@ function renderCached(key) {
     container.scrollTop = container.scrollHeight;
 }
 
-// ======= Messages =======
+//messages
 
 function renderMessages(container, messages) {
     container.innerHTML = '';
@@ -525,7 +585,7 @@ async function fetchMessages(force) {
     }
 }
 
-// ======= Send Message =======
+//send
 
 async function sendMessage() {
     var input = document.getElementById('messageInput');
@@ -563,12 +623,14 @@ async function sendMessage() {
     }
 }
 
-// ======= Polling =======
+//polling
 
 function startPolling() {
     if (pollingInterval) clearInterval(pollingInterval);
     pollingInterval = setInterval(async function() {
         await fetchMessages(false);
+
+        await pollUnreads();
 
         var notifs = await apiGet('/notifications');
         if (notifs && notifs.notifications && notifs.notifications.length > 0) {
@@ -577,8 +639,89 @@ function startPolling() {
 
         if (currentView === 'dm') {
             await renderDMSidebar();
+        } else if (currentServer) {
+            renderServerSidebar(currentServer);
         }
+
+        renderServerStrip();
     }, POLL_MS);
+}
+
+async function pollUnreads() {
+    //DMs – fetch actual messages so the cache is populated
+    var convos = await apiGet('/conversations');
+    if (convos && convos.conversations) {
+        for (var ci = 0; ci < convos.conversations.length; ci++) {
+            var dm = convos.conversations[ci];
+            var key = 'dm:' + dm.name;
+            if (currentChat && chatKey(currentChat) === key) continue;
+            var cache = getCache(key);
+            var lastMsg = dm.last_message;
+            if (lastMsg && lastMsg.timestamp > cache.ts && lastMsg.sender !== currentUser) {
+                // Fetch the actual messages so they are stored in cache
+                var dmData = await apiPost('/messages', { dm: dm.name, since: cache.ts });
+                if (dmData && dmData.messages) {
+                    var newCount = 0;
+                    dmData.messages.forEach(function(msg) {
+                        var k = msgKey(msg);
+                        if (!cache.keys.has(k)) {
+                            var isDup = cache.messages.some(function(ex) {
+                                return ex.sender === msg.sender &&
+                                    ex.message === msg.message &&
+                                    Math.abs(ex.timestamp - msg.timestamp) < 10;
+                            });
+                            if (!isDup) {
+                                cache.keys.add(k);
+                                cache.messages.push(msg);
+                                if (msg.sender !== currentUser) newCount++;
+                            } else {
+                                cache.keys.add(k);
+                            }
+                        }
+                        if (msg.timestamp > cache.ts) cache.ts = msg.timestamp;
+                    });
+                    if (newCount > 0) addUnread(key, newCount);
+                }
+            }
+        }
+    }
+
+    //channels – store fetched messages in cache
+    for (var i = 0; i < serverList.length; i++) {
+        var srv = serverList[i];
+        var channels = srv.channels || [];
+        for (var j = 0; j < channels.length; j++) {
+            var ch = channels[j];
+            var chName = ch.name || ch;
+            var key = 'ch:' + srv.name + '/' + chName;
+            if (currentChat && chatKey(currentChat) === key) continue;
+            var cache = getCache(key);
+            var body = { server: srv.name, channel: chName, since: cache.ts };
+            var data = await apiPost('/messages', body);
+            if (data && data.messages && data.messages.length > 0) {
+                var newCount = 0;
+                data.messages.forEach(function(msg) {
+                    var k = msgKey(msg);
+                    if (!cache.keys.has(k)) {
+                        var isDup = cache.messages.some(function(ex) {
+                            return ex.sender === msg.sender &&
+                                ex.message === msg.message &&
+                                Math.abs(ex.timestamp - msg.timestamp) < 10;
+                        });
+                        if (!isDup) {
+                            cache.keys.add(k);
+                            cache.messages.push(msg);
+                            if (msg.sender !== currentUser) newCount++;
+                        } else {
+                            cache.keys.add(k);
+                        }
+                    }
+                    if (msg.timestamp > cache.ts) cache.ts = msg.timestamp;
+                });
+                if (newCount > 0) addUnread(key, newCount);
+            }
+        }
+    }
 }
 
 function startHeartbeat() {
@@ -586,7 +729,7 @@ function startHeartbeat() {
     heartbeatInterval = setInterval(function() { apiPost('/heartbeat', {}); }, HEARTBEAT_MS);
 }
 
-// ======= Members Panel =======
+//members panel
 
 function toggleMembers() {
     membersVisible = !membersVisible;
@@ -629,7 +772,7 @@ function memberHTML(peer, isOffline) {
         '</span></div>';
 }
 
-// ======= Search =======
+//search
 
 function filterSidebar() {
     var q = (document.getElementById('searchInput') || {}).value;
@@ -641,7 +784,7 @@ function filterSidebar() {
     });
 }
 
-// ======= Logout =======
+//logout
 
 async function handleLogout() {
     currentUser = null;
@@ -652,7 +795,7 @@ async function handleLogout() {
     window.location.href = '/login';
 }
 
-// ======= Admin =======
+//admin
 
 async function showAdminPanel() {
     showModal('adminModal');
@@ -728,5 +871,5 @@ async function deleteCurrentChannel() {
     }
 }
 
-// ======= Start =======
+//start
 document.addEventListener('DOMContentLoaded', init);

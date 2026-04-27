@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BK Discordmess</title>
-    <link rel="stylesheet" href="/css/messenger.css">
+    <link rel="stylesheet" href="/css/theme.css">
 </head>
 <body>
     <div class="app">
@@ -44,6 +44,13 @@
                     <button class="user-bar-btn" id="adminBtn" onclick="showAdminPanel()" title="Admin Panel" style="display:none">
                         <svg viewBox="0 0 24 24" fill="none" stroke="#5865f2" stroke-width="2">
                             <path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z"/>
+                        </svg>
+                    </button>
+                    <button class="user-bar-btn" id="monitorBtn" onclick="window.location.href='/admin-monitor.html'" title="Switch to Admin Monitor" style="display:none">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#5865f2" stroke-width="2">
+                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                            <line x1="8" y1="21" x2="16" y2="21"/>
+                            <line x1="12" y1="17" x2="12" y2="21"/>
                         </svg>
                     </button>
                     <button class="user-bar-btn" id="themeToggle" onclick="toggleTheme()" title="Toggle Theme">
