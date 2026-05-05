@@ -28,6 +28,15 @@ import asyncio
 import inspect
 
 
+# Maximum allowed header size (8KB) to prevent memory exhaustion
+# from continuous data flows (Assignment Requirement: non-blocking protocol design)
+MAX_HEADER_SIZE = 8192
+
+# Read timeout in seconds to prevent hanging connections
+# in the non-blocking async event loop
+READ_TIMEOUT = 30
+
+
 def get_encoding_from_headers(headers):
     return 'utf-8'
 
@@ -66,11 +75,22 @@ class HttpAdapter:
         self.response = Response()
 
     def _recv_full_request(self, conn):
+        """Read a complete HTTP request from a blocking socket.
+
+        Accumulates bytes until the header terminator (\r\n\r\n) is found,
+        then reads exactly Content-Length bytes for the body.
+        Enforces MAX_HEADER_SIZE to prevent memory exhaustion from
+        continuous data flows (Assignment: non-blocking protocol design).
+        """
         raw = conn.recv(65536)
         if not raw:
             return None
 
         while b'\r\n\r\n' not in raw:
+            # Guard: reject headers larger than MAX_HEADER_SIZE
+            if len(raw) > MAX_HEADER_SIZE:
+                print("[HttpAdapter] Header too large ({}B), dropping".format(len(raw)))
+                return None
             chunk = conn.recv(65536)
             if not chunk:
                 break
@@ -165,12 +185,31 @@ class HttpAdapter:
         conn.close()
 
     async def _read_full_request_async(self, reader):
-        raw = await reader.read(65536)
+        """Read a complete HTTP request from an asyncio StreamReader.
+
+        Uses asyncio.wait_for with READ_TIMEOUT to prevent the coroutine
+        from hanging indefinitely on slow or malicious clients.
+        Enforces MAX_HEADER_SIZE to prevent memory exhaustion from
+        continuous data flows (Assignment: non-blocking protocol design).
+        """
+        try:
+            raw = await asyncio.wait_for(reader.read(65536), timeout=READ_TIMEOUT)
+        except asyncio.TimeoutError:
+            print("[HttpAdapter] Read timeout on initial data")
+            return None
         if not raw:
             return None
 
         while b'\r\n\r\n' not in raw:
-            chunk = await reader.read(65536)
+            # Guard: reject headers larger than MAX_HEADER_SIZE
+            if len(raw) > MAX_HEADER_SIZE:
+                print("[HttpAdapter] Header too large ({}B), dropping".format(len(raw)))
+                return None
+            try:
+                chunk = await asyncio.wait_for(reader.read(65536), timeout=READ_TIMEOUT)
+            except asyncio.TimeoutError:
+                print("[HttpAdapter] Read timeout waiting for header end")
+                return None
             if not chunk:
                 break
             raw += chunk
@@ -193,7 +232,13 @@ class HttpAdapter:
 
         while len(body_so_far) < content_length:
             remaining = content_length - len(body_so_far)
-            chunk = await reader.read(min(remaining, 65536))
+            try:
+                chunk = await asyncio.wait_for(
+                    reader.read(min(remaining, 65536)), timeout=READ_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                print("[HttpAdapter] Read timeout waiting for body")
+                break
             if not chunk:
                 break
             body_so_far += chunk
@@ -272,8 +317,6 @@ class HttpAdapter:
 
         except Exception as e:
             print("[HttpAdapter] Coroutine Error: {}".format(e))
-            import traceback
-            traceback.print_exc()
             try:
                 writer.close()
             except Exception:

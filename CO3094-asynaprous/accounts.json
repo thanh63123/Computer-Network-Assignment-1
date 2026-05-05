@@ -43,5 +43,10 @@
         "password": "okokok",
         "display_name": "koko",
         "role": "user"
+    },
+    "lololo": {
+        "password": "lololo",
+        "display_name": "lololo",
+        "role": "user"
     }
 }

@@ -113,6 +113,22 @@ def is_host_server(headers):
 # Helper functions used across multiple routes
 # ---------------------------------------------------------------
 
+def sanitize_html(text):
+    """Escapes HTML special characters to prevent XSS attacks.
+
+    Manually implemented (no imports) -- replaces dangerous characters
+    with their HTML entity equivalents so user input is rendered as
+    text rather than executed as HTML/JavaScript.
+    """
+    if not isinstance(text, str):
+        return text
+    text = text.replace('&', '&amp;')
+    text = text.replace('<', '&lt;')
+    text = text.replace('>', '&gt;')
+    text = text.replace('"', '&quot;')
+    text = text.replace("'", '&#x27;')
+    return text
+
 def get_basic_auth_creds(auth_header):
     """Decodes the "Authorization: Basic <base64>" header.
 
@@ -739,7 +755,7 @@ async def broadcast_peer(headers, body):
 
     server_name = data.get('server', DEFAULT_SERVER)
     channel_name = data.get('channel', '')
-    message_text = data.get('message', '')
+    message_text = sanitize_html(data.get('message', ''))
 
     if not message_text:
         return {"error": "Empty message"}, 400, {}
@@ -797,7 +813,7 @@ async def send_peer(headers, body):
         data = {}
 
     target = data.get('target', '')
-    message_text = data.get('message', '')
+    message_text = sanitize_html(data.get('message', ''))
 
     if not target or not message_text:
         return {"error": "Missing target or message"}, 400, {}
@@ -836,6 +852,10 @@ def receive_message(headers, body):
     msg_type = data.get('type', 'channel')
     sender = data.get('sender', '')
     ts = data.get('timestamp', 0)
+    
+    # Ensure messages from other peers are also sanitized to prevent XSS
+    if 'message' in data:
+        data['message'] = sanitize_html(data['message'])
 
     if msg_type == 'direct':
         target = data.get('target', '')
@@ -1348,7 +1368,7 @@ async def admin_send_to_channel(headers, body):
 
     server_name = data.get('server', DEFAULT_SERVER)
     channel_name = data.get('channel', '')
-    message_text = data.get('message', '')
+    message_text = sanitize_html(data.get('message', ''))
 
     if not message_text or not channel_name:
         return {"error": "Missing channel or message"}, 400, {}
@@ -1401,7 +1421,7 @@ async def admin_send_to_dm(headers, body):
         data = {}
 
     target = data.get('target', '')
-    message_text = data.get('message', '')
+    message_text = sanitize_html(data.get('message', ''))
 
     if not target or not message_text:
         return {"error": "Missing target or message"}, 400, {}
