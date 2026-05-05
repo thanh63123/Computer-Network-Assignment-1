@@ -239,6 +239,64 @@ def check_stale_peers():
             notify_user_offline(username)
 
 
+SESSION_MAX_AGE = 7 * 24 * 3600
+MAX_MESSAGES_PER_CONV = 500
+NOTIFICATION_MAX_AGE = 300
+GC_INTERVAL = 60
+_last_gc_time = 0
+
+
+def run_garbage_collection():
+    #Cleans up stale sessions, old messages, and expired notifications.
+    global _last_gc_time
+    now = time.time()
+
+    if now - _last_gc_time < GC_INTERVAL:
+        return
+    _last_gc_time = now
+
+    expired_tokens = [
+        token for token, info in sessions.items()
+        if now - info.get('last_seen', 0) > SESSION_MAX_AGE
+    ]
+    for token in expired_tokens:
+        del sessions[token]
+    if expired_tokens:
+        print("[GC] Cleaned {} expired sessions".format(len(expired_tokens)))
+
+    for key, msgs in direct_messages.items():
+        if len(msgs) > MAX_MESSAGES_PER_CONV:
+            removed = len(msgs) - MAX_MESSAGES_PER_CONV
+            direct_messages[key] = msgs[-MAX_MESSAGES_PER_CONV:]
+            print("[GC] Trimmed {} old DMs from {}".format(removed, key))
+
+    for srv_name, srv in servers.items():
+        for ch_name, ch in srv.get('channels', {}).items():
+            msgs = ch.get('messages', [])
+            if len(msgs) > MAX_MESSAGES_PER_CONV:
+                removed = len(msgs) - MAX_MESSAGES_PER_CONV
+                ch['messages'] = msgs[-MAX_MESSAGES_PER_CONV:]
+                print("[GC] Trimmed {} old msgs from #{}/{}".format(
+                    removed, srv_name, ch_name))
+
+    for username in list(notifications.keys()):
+        before = len(notifications[username])
+        notifications[username] = [
+            n for n in notifications[username]
+            if now - n.get('time', 0) < NOTIFICATION_MAX_AGE
+        ]
+
+        if not notifications[username]:
+            del notifications[username]
+        else:
+            pruned = before - len(notifications[username])
+            if pruned:
+                print("[GC] Pruned {} old notifications for {}".format(
+                    pruned, username))
+
+    check_stale_peers()
+
+
 async def forward_to_peer(target_username, data):
     """Coroutine that delivers a message directly to another peer's server.
 
@@ -490,11 +548,9 @@ def signup(headers, body):
     if username in accounts:
         return {"error": "Username already taken"}, 409, {}
 
-    email = params.get('email', '').strip()
     accounts[username] = {
         "password": password,
         "display_name": display_name,
-        "email": email,
         "role": "user",
     }
     save_accounts(accounts)
@@ -1007,6 +1063,9 @@ def heartbeat(headers, body):
     if user in peers:
         peers[user]['last_seen'] = time.time()
         peers[user]['online'] = True
+
+    # Piggyback GC on heartbeat -- runs at most once every 60s
+    run_garbage_collection()
 
     return {"status": "ok", "user": user}, 200, {}
 

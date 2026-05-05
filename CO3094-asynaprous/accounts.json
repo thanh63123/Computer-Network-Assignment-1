@@ -32,13 +32,16 @@
     "janedoe": {
         "password": "jane123",
         "display_name": "Jane Doe",
-        "email": "",
         "role": "user"
     },
     "aloha": {
         "password": "aloha",
         "display_name": "BKer",
-        "email": "",
+        "role": "user"
+    },
+    "okok": {
+        "password": "okokok",
+        "display_name": "koko",
         "role": "user"
     }
 }
