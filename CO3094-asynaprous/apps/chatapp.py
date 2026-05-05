@@ -241,7 +241,6 @@ def check_stale_peers():
 
 SESSION_MAX_AGE = 7 * 24 * 3600
 MAX_MESSAGES_PER_CONV = 500
-NOTIFICATION_MAX_AGE = 300
 GC_INTERVAL = 60
 _last_gc_time = 0
 
@@ -278,21 +277,6 @@ def run_garbage_collection():
                 ch['messages'] = msgs[-MAX_MESSAGES_PER_CONV:]
                 print("[GC] Trimmed {} old msgs from #{}/{}".format(
                     removed, srv_name, ch_name))
-
-    for username in list(notifications.keys()):
-        before = len(notifications[username])
-        notifications[username] = [
-            n for n in notifications[username]
-            if now - n.get('time', 0) < NOTIFICATION_MAX_AGE
-        ]
-
-        if not notifications[username]:
-            del notifications[username]
-        else:
-            pruned = before - len(notifications[username])
-            if pruned:
-                print("[GC] Pruned {} old notifications for {}".format(
-                    pruned, username))
 
     check_stale_peers()
 
