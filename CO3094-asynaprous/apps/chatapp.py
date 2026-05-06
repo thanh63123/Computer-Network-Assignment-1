@@ -109,6 +109,40 @@ def is_host_server(headers):
     host = headers.get('host', '')
     return host.startswith('127.0.0.1') or host.startswith('localhost')
 
+
+# ---------------------------------------------------------------
+# Daemon-to-Tracker Communication Helper
+# ---------------------------------------------------------------
+async def daemon_call_tracker(method, path, user, body_dict=None):
+    """Bridges Peer Daemons to the Centralized Tracker (Port 8000) non-blockingly."""
+    try:
+        reader, writer = await asyncio.open_connection('127.0.0.1', 8000)
+        body_str = json.dumps(body_dict) if body_dict else ""
+        
+        req = (f"{method} {path} HTTP/1.1\r\n"
+               f"Host: 127.0.0.1:8000\r\n"
+               f"X-Daemon-User: {user}\r\n"
+               f"Content-Type: application/json\r\n"
+               f"Content-Length: {len(body_str.encode('utf-8'))}\r\n"
+               f"Connection: close\r\n\r\n{body_str}")
+        
+        writer.write(req.encode('utf-8'))
+        await writer.drain()
+        
+        resp_data = await asyncio.wait_for(reader.read(65536), timeout=3.0)
+        writer.close()
+        await writer.wait_closed()
+        
+        if b"\r\n\r\n" in resp_data:
+            _, body = resp_data.split(b"\r\n\r\n", 1)
+            try:
+                return json.loads(body.decode('utf-8', errors='ignore'))
+            except json.JSONDecodeError:
+                return None
+    except Exception as e:
+        print("[P2P] Could not reach Tracker at 8000: {}".format(e))
+    return None
+
 # ---------------------------------------------------------------
 # Helper functions used across multiple routes
 # ---------------------------------------------------------------
@@ -163,9 +197,13 @@ def get_session_user(headers):
     """Checks if the request has a valid session and returns the username.
 
     Auth is checked in this order:
+      0. X-Daemon-User header    (Bypass for inter-daemon sync)
       1. X-Session-Token header  (per-tab, avoids cookie collisions)
       2. Cookie session_token    (classic cookie-based fallback)
     """
+    if 'x-daemon-user' in headers:
+        return headers['x-daemon-user']
+
     header_token = headers.get('x-session-token', '')
     if header_token:
         session = sessions.get(header_token)
@@ -588,12 +626,8 @@ def logout(headers, body):
 # ---------------------------------------------------------------
 
 @app.route('/submit-info', methods=['POST'])
-def submit_info(headers, body):
-    """A peer tells the tracker "I'm at this IP and port".
-
-    This is the first thing a peer does after logging in -- it registers
-    itself so other peers can find it later via /get-list.
-    """
+async def submit_info(headers, body):
+    """A peer tells the tracker "I'm at this IP and port"."""
     user = get_session_user(headers)
     if not user:
         return {"error": "Not authenticated"}, 401, {}
@@ -617,6 +651,12 @@ def submit_info(headers, body):
         'last_seen': time.time(),
     }
 
+    # SYNC WITH CENTRAL TRACKER IF WE ARE A PEER DAEMON
+    host_header = headers.get('host', '')
+    my_port = host_header.split(':')[-1] if ':' in host_header else '80'
+    if my_port != "8000":
+        await daemon_call_tracker('POST', '/submit-info', user, data)
+
     print("[ChatApp] Peer registered: {} at {}:{}".format(user, peer_ip, peer_port))
 
     return {
@@ -626,17 +666,27 @@ def submit_info(headers, body):
     }, 200, {}
 
 @app.route('/get-list', methods=['GET'])
-def get_list(headers, body):
-    """Returns the list of all known peers and whether they're online.
-
-    This is how a peer discovers who else is available to chat with.
-    We also check if a peer has been silent for too long (120s) and
-    mark them as offline automatically.
-    """
+async def get_list(headers, body):
+    """Returns the list of all known peers and whether they're online."""
     user = get_session_user(headers)
     if not user:
         return {"error": "Not authenticated"}, 401, {}
 
+    # FETCH FROM CENTRAL TRACKER IF WE ARE A PEER DAEMON
+    host_header = headers.get('host', '')
+    my_port = host_header.split(':')[-1] if ':' in host_header else '80'
+    if my_port != "8000":
+        tracker_data = await daemon_call_tracker('GET', '/get-list', user)
+        if tracker_data and 'peers' in tracker_data:
+            # Sync local RAM with tracker authority
+            for p in tracker_data['peers']:
+                peers[p['username']] = {
+                    'ip': p['ip'], 'port': p['port'], 'peer_port': p['port'],
+                    'online': p['online'], 'last_seen': time.time()
+                }
+            return tracker_data, 200, {}
+
+    # Tracker logic
     now = time.time()
     peer_list = []
     for username, info in peers.items():
