@@ -180,7 +180,7 @@ def run_backend(ip, port, routes):
             print("[Backend] Callback mode: event loop started")
             while True:
                 # Block until at least one socket is ready
-                events = sel.select(timeout=None)
+                events = sel.select(timeout=0.5)
                 for key, mask in events:
                     # Unpack the handler + args we stored during register()
                     callback, *args = key.data
@@ -189,15 +189,21 @@ def run_backend(ip, port, routes):
         # --- Threading path: spawn a thread for each accepted connection ---
         else:
             print("[Backend] Threading mode: accepting connections")
+            server.settimeout(0.5)
             while True:
-                conn, addr = server.accept()
-                # daemon=True so threads die when the main process exits
-                client_thread = threading.Thread(
-                    target=handle_client,
-                    args=(ip, port, conn, addr, routes),
-                    daemon=True
-                )
-                client_thread.start()
+                try:
+                    conn, addr = server.accept()
+                    client_thread = threading.Thread(
+                        target=handle_client,
+                        args=(ip, port, conn, addr, routes),
+                        daemon=True
+                    )
+                    client_thread.start()
+                except socket.timeout:
+                    continue
+
+    except KeyboardInterrupt:
+        print("\n[Backend] Server stopped by user (Ctrl+C)")
 
     except socket.error as e:
         print("Socket error: {}".format(e))

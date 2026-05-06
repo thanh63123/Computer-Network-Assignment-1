@@ -148,7 +148,10 @@ class HttpAdapter:
         response_data = None
 
         if req.hook:
-            result = req.hook(headers=req.headers, body=req.body)
+            if inspect.iscoroutinefunction(req.hook):
+                result = asyncio.run(req.hook(headers=req.headers, body=req.body))
+            else:
+                result = req.hook(headers=req.headers, body=req.body)
 
             if isinstance(result, tuple) and len(result) == 3:
                 app_body, app_status, app_headers = result
